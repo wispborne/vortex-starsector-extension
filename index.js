@@ -16,6 +16,63 @@ const ATTR_FORUM_THREAD_ID = "forumThreadId";
 const COMMENT_STRIPPING_REGEX = /((["'])(?:\\[\s\S]|.)*?\2|\#(?![*\#])(?:\\.|\[(?:\\.|.)\]|.)*?\#)|\#.*?$|\#\*[\s\S]*?\*\#/gm;
 
 const TEST_MIGRATION = false
+/**
+ * @param {import('vortex-api/lib/types/api').IExtensionContext} context
+ */
+function main(context) {
+  context.registerGame({
+    id: GAME_ID,
+    name: 'Starsector',
+    mergeMods: true,
+    queryPath: findGame,
+    queryModPath: () => 'mods',
+    logo: 'gameart.jpg',
+    executable: () => 'starsector.exe',
+    requiredFiles: [
+      'starsector.exe',
+    ]
+  });
+
+  // Not working perfectly, seems to add errors to Vortex's state, which it complains endlessly about.
+  // context.registerMigration(old => migrateFrom_1_1_0(context.api, old));
+
+  context.registerInstaller(
+    'starsector',
+    50,
+    testSupportedContent,
+    (files, destination, gameId, progress) => installContent(context.api, files, destination, gameId, progress));
+
+  // Based on https://github.com/Nexus-Mods/Vortex/blob/fc439bda319430b0891151db2d6505ab79128872/src/extensions/nexus_integration/index.tsx#L804
+  context.registerAction('mods-action-icons', 900, 'about', {}, 'Open on Starsector Forums',
+    instanceIds => {
+      if (!isVortexInStarsectorMode(context)) {
+        return false;
+      }
+
+      if (TEST_MIGRATION) {
+        migrateFrom_1_1_0(context.api, '1.0.0'); // Just for testing
+      }
+
+      const forumThreadId = getModAttribute(context, instanceIds, ATTR_FORUM_THREAD_ID)
+
+      if (forumThreadId != undefined) {
+        log('info', 'Opening mod forum id ' + forumThreadId, {});
+
+        // Based on https://github.com/Nexus-Mods/Vortex/blob/063c53fc220beb95ccc1e49ef33174f1443f2e69/src/extensions/nexus_integration/eventHandlers.ts#L142
+        util.opn('https://fractalsoftworks.com/forum/index.php?topic=' + forumThreadId)
+          .catch(err => undefined);
+        return true;
+      } else {
+        return false;
+      }
+    },
+    instanceIds => {
+      return isVortexInStarsectorMode(context) &&
+        getModAttribute(context, instanceIds, 'forumThreadId') != null;
+    });
+
+  return true;
+}
 
 /**
  * @returns {string | Promise<String>}
@@ -152,118 +209,6 @@ async function installContent(
     });
 }
 
-// From https://github.com/Nexus-Mods/vortex-games/blob/296abf250fdc1c57314791e704d14a5165695dec/game-bladeandsorcery/index.js#L403
-function migrateFrom_1_1_0(api, oldVersion) {
-  if (semver.gt(oldVersion, '1.1.0')) {
-    return Promise.resolve();
-  }
-
-  log('info', 'Starting migration from extension v' + oldVersion, {});
-  const state = api.store.getState();
-  const mods = util.getSafe(state, ['persistent', 'mods', GAME_ID], {});
-  const modKeys = Object.keys(mods);
-
-  if (modKeys.length === 0) {
-    return Promise.resolve();
-  }
-
-  const decimalRegex = /^[-+]?[0-9]+\.[0-9]+$/;
-  const modsToMigrate = modKeys
-    .map(key => mods[key])
-    .filter(mod => {
-      if (TEST_MIGRATION) return true;
-
-      let threadId = mod.attributes[ATTR_FORUM_THREAD_ID];
-      return threadId == null || !threadId.toString().match(decimalRegex);
-    });
-
-  if (modsToMigrate.length === 0) {
-    return Promise.resolve();
-  }
-
-  const stagingFolder = selectors.installPathForGame(state, GAME_ID);
-
-  return Promise.each(modsToMigrate, mod => {
-    const modPath = path.join(stagingFolder, mod.installationPath);
-    return walkAsync(modPath)
-      .then(files => {
-        log('info', 'Searching mod files for version. Mod dir: ' + modPath, {});
-        // tryGetForumThreadIdFromModFiles logs and shows errors, no need to do so here
-        tryGetForumThreadIdFromModFiles(files, modPath, api)
-          .then(forumThreadId => {
-
-            if (forumThreadId != null) {
-              // From https://github.com/Nexus-Mods/vortex-games/blob/296abf250fdc1c57314791e704d14a5165695dec/game-bladeandsorcery/index.js#L444
-              api.store.dispatch(actions.setModAttribute(GAME_ID, mod.id, ATTR_FORUM_THREAD_ID, forumThreadId));
-              log('info', 'Migrated mod ' + mod.id + ', adding forumThreadId: ' + forumThreadId, {});
-            }
-
-            return Promise.resolve();
-          });
-      });
-  });
-}
-
-/**
- * @param {import('vortex-api/lib/types/api').IExtensionContext} context
- */
-function main(context) {
-  context.registerGame({
-    id: GAME_ID,
-    name: 'Starsector',
-    mergeMods: true,
-    queryPath: findGame,
-    queryModPath: () => 'mods',
-    logo: 'gameart.jpg',
-    executable: () => 'starsector.exe',
-    requiredFiles: [
-      'starsector.exe',
-    ]
-  });
-
-  context.registerMigration(old => migrateFrom_1_1_0(context.api, old));
-
-  context.registerInstaller(
-    'starsector',
-    50,
-    testSupportedContent,
-    (files, destination, gameId, progress) => installContent(context.api, files, destination, gameId, progress));
-
-  context.once(() => {
-    util.installIconSet('starsector-forum', `${__dirname}/starsector-forum.png`);
-  });
-
-  // Based on https://github.com/Nexus-Mods/Vortex/blob/fc439bda319430b0891151db2d6505ab79128872/src/extensions/nexus_integration/index.tsx#L804
-  context.registerAction('mods-action-icons', 900, 'starsector-forum', {}, 'Open on Starsector Forums',
-    instanceIds => {
-      if (!isVortexInStarsectorMode(context)) {
-        return false;
-      }
-
-      if (TEST_MIGRATION) {
-        migrateFrom_1_1_0(context.api, '1.0.0'); // Just for testing
-      }
-
-      const forumThreadId = getModAttribute(context, instanceIds, ATTR_FORUM_THREAD_ID)
-
-      if (forumThreadId != undefined) {
-        log('info', 'Opening mod forum id ' + forumThreadId, {});
-
-        // Based on https://github.com/Nexus-Mods/Vortex/blob/063c53fc220beb95ccc1e49ef33174f1443f2e69/src/extensions/nexus_integration/eventHandlers.ts#L142
-        util.opn('https://fractalsoftworks.com/forum/index.php?topic=' + forumThreadId)
-          .catch(err => undefined);
-        return true;
-      } else {
-        return false;
-      }
-    },
-    instanceIds => {
-      return isVortexInStarsectorMode(context) &&
-        getModAttribute(context, instanceIds, 'forumThreadId') != null;
-    });
-
-  return true;
-}
 
 async function tryGetForumThreadIdFromModFiles(filePaths, destinationPath, contextApi) {
   // Read the version file, if it exists
@@ -350,6 +295,58 @@ function walkAsync(dir) {
     });
   })
     .then(() => Promise.resolve(entries));
+}
+
+// From https://github.com/Nexus-Mods/vortex-games/blob/296abf250fdc1c57314791e704d14a5165695dec/game-bladeandsorcery/index.js#L403
+function migrateFrom_1_1_0(api, oldVersion) {
+  if (semver.gt(oldVersion, '1.1.0')) {
+    return Promise.resolve();
+  }
+
+  log('info', 'Starting migration from extension v' + oldVersion, {});
+  const state = api.store.getState();
+  const mods = util.getSafe(state, ['persistent', 'mods', GAME_ID], {});
+  const modKeys = Object.keys(mods);
+
+  if (modKeys.length === 0) {
+    return Promise.resolve();
+  }
+
+  const decimalRegex = /^[-+]?[0-9]+\.[0-9]+$/;
+  const modsToMigrate = modKeys
+    .map(key => mods[key])
+    .filter(mod => {
+      if (TEST_MIGRATION) return true;
+
+      let threadId = mod.attributes[ATTR_FORUM_THREAD_ID];
+      return threadId == null || !threadId.toString().match(decimalRegex);
+    });
+
+  if (modsToMigrate.length === 0) {
+    return Promise.resolve();
+  }
+
+  const stagingFolder = selectors.installPathForGame(state, GAME_ID);
+
+  return Promise.each(modsToMigrate, mod => {
+    const modPath = path.join(stagingFolder, mod.installationPath);
+    return walkAsync(modPath)
+      .then(files => {
+        log('info', 'Searching mod files for version. Mod dir: ' + modPath, {});
+        // tryGetForumThreadIdFromModFiles logs and shows errors, no need to do so here
+        tryGetForumThreadIdFromModFiles(files, modPath, api)
+          .then(forumThreadId => {
+
+            if (forumThreadId != null) {
+              // From https://github.com/Nexus-Mods/vortex-games/blob/296abf250fdc1c57314791e704d14a5165695dec/game-bladeandsorcery/index.js#L444
+              api.store.dispatch(actions.setModAttribute(GAME_ID, mod.id, ATTR_FORUM_THREAD_ID, forumThreadId));
+              log('info', 'Migrated mod ' + mod.id + ', adding forumThreadId: ' + forumThreadId, {});
+            }
+
+            return Promise.resolve();
+          });
+      });
+  });
 }
 
 module.exports = {
