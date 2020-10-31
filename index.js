@@ -15,7 +15,7 @@ const ATTR_FORUM_THREAD_ID = "forumThreadId";
 // Removes '#'s, which are used as comments by the game's json parser
 const COMMENT_STRIPPING_REGEX = /((["'])(?:\\[\s\S]|.)*?\2|\#(?![*\#])(?:\\.|\[(?:\\.|.)\]|.)*?\#)|\#.*?$|\#\*[\s\S]*?\*\#/gm;
 
-const TEST_MIGRATION = true
+const TEST_MIGRATION = false
 
 /**
  * @returns {string | Promise<String>}
@@ -229,7 +229,9 @@ function main(context) {
     testSupportedContent,
     (files, destination, gameId, progress) => installContent(context.api, files, destination, gameId, progress));
 
-  util.installIconSet('starsector-forum', `${__dirname}/starsector-forum.png`);
+  context.once(() => {
+    util.installIconSet('starsector-forum', `${__dirname}/starsector-forum.png`);
+  });
 
   // Based on https://github.com/Nexus-Mods/Vortex/blob/fc439bda319430b0891151db2d6505ab79128872/src/extensions/nexus_integration/index.tsx#L804
   context.registerAction('mods-action-icons', 900, 'starsector-forum', {}, 'Open on Starsector Forums',
@@ -269,8 +271,6 @@ async function tryGetForumThreadIdFromModFiles(filePaths, destinationPath, conte
   log('info', 'Found version checker file: ' + versionCheckerFile)
 
   if (versionCheckerFile) {
-    // const contentFile = path.join(destinationPath, versionCheckerFile);
-
     let versionCheckerData = await fs.readFileAsync(versionCheckerFile, { encoding: 'utf8' })
     let parsedVerCheckData;
     try {
