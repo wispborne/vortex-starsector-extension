@@ -1,18 +1,27 @@
 {
   "name": "game-starsector",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Vortex support for Starsector v0.95a. ",
-  "main": "index.js",
+  "main": "src/index.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "webpack": "node ./node_modules/webpack/bin/webpack --config webpack.config.js --progress --color",
+    "build": "npm run webpack && extractInfo"
   },
-  "author": "ALazyWizard and Wisp",
+  "author": "ALazyWizard, Wisp",
   "license": "Apache 2.0",
   "dependencies": {
     "bluebird": "^3.7.2",
+    "hjson": "^3.2.2",
     "path": "^0.12.7",
+    "really-relaxed-json": "^0.2.24",
     "relaxed-json": "^1.0.3",
     "semver": "^7.3.2",
-    "vortex-api": "^0.5.2"
+    "typescript": "^4.2.4"
+  },
+  "devDependencies": {
+    "ts-loader": "5.3.3",
+    "vortex-api": "Nexus-Mods/vortex-api",
+    "webpack": "^4.46.0",
+    "webpack-cli": "^4.6.0"
   }
 }

@@ -1,7 +1,7 @@
 // @ts-check
 const Promise = require('bluebird');
 const path = require('path');
-const rjson = require('relaxed-json');
+const rjson = require('hjson');
 const { fs, log, util, selectors } = require('vortex-api');
 const winapi = require('winapi-bindings');
 const semver = require('semver');
@@ -174,7 +174,7 @@ async function installContent(
               return Promise.resolve(attrInstructions);
             }
 
-            // Function to get a value from mod_info.json by key
+            // Function to get a value from *.version by key
             const getAttr = key => {
               try {
                 return parsedVerCheckData[key];
