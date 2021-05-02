@@ -1,12 +1,15 @@
-// @ts-check
-const Promise = require('bluebird');
-const path = require('path');
-const rjson = require('hjson');
-const { fs, log, util, selectors } = require('vortex-api');
-const winapi = require('winapi-bindings');
-const semver = require('semver');
+import { IExtensionContext, IDiscoveryResult, IGame, IState, ISupportedResult, ProgressDelegate, IInstallResult, IExtensionApi, IProfile, ThunkStore, IDeployedFile, IInstruction, ILink, IMod, IDialogResult } from 'vortex-api/lib/types/api';
 
-const GAME_ID = 'starsector';
+// @ts-check
+import Promise = require('bluebird');
+import path = require('path');
+import hjson = require('hjson');
+import { fs, log, util, selectors } from 'vortex-api';
+import winapi = require('winapi-bindings');
+import semver = require('semver');
+import updates = require('./updates')
+
+export const GAME_ID = 'starsector';
 const MOD_INFO_FILE = "mod_info.json"
 const VERSION_CHECKER_FILE_EXT = ".version"
 
@@ -17,7 +20,7 @@ const COMMENT_STRIPPING_REGEX = /((["'])(?:\\[\s\S]|.)*?\2|\#(?![*\#])(?:\\.|\[(
 /**
  * @returns {string | Promise<String>}
  */
-function findGame() {
+function findGame(): string | Promise<string> {
   try {
     const instPath = winapi.RegGetValue(
       'HKEY_CURRENT_USER',
@@ -32,7 +35,7 @@ function findGame() {
   }
 }
 
-function testSupportedContent(files, gameId) {
+function testSupportedContent(files: string[], gameId: string) {
   if (gameId !== GAME_ID) {
     return Promise.resolve({ supported: false });
   }
@@ -44,12 +47,19 @@ function testSupportedContent(files, gameId) {
   });
 }
 
+/**
+ * Strip '#' comments using regex, then parse using relaxed-json
+ */
+export function parseJson<T>(json: string): T {
+  return hjson.parse(json.replace(COMMENT_STRIPPING_REGEX, "$1"));
+}
+
 async function installContent(
-  contextApi,
-  files,
-  destinationPath,
-  gameId,
-  progressDelegate) {
+  contextApi: IExtensionApi,
+  files: string[],
+  destinationPath: string,
+  gameId: string,
+  progressDelegate: ProgressDelegate) {
   const modInfoFile = files.find(file => path.basename(file) === MOD_INFO_FILE);
   const basePath = path.dirname(modInfoFile);
 
@@ -57,12 +67,11 @@ async function installContent(
 
   const contentFile = path.join(destinationPath, modInfoFile);
   return fs.readFileAsync(contentFile, { encoding: 'utf8' })
-    .then(data => {
+    .then((data: string) => {
       const attrInstructions = [];
       let parsed;
       try {
-        // Strip '#' comments using regex, then parse using relaxed-json
-        parsed = rjson.parse(data.replace(COMMENT_STRIPPING_REGEX, "$1"));
+        parsed = parseJson(data);
       } catch (err) {
         log('warn', MOD_INFO_FILE + ' invalid: ' + err.message);
         return Promise.resolve(attrInstructions);
@@ -108,7 +117,7 @@ async function installContent(
         // Else use new schema where version is an object with major, minor, patch.
         try {
           var versionElements = [];
-          
+
           if (version["major"] != null) {
             versionElements.push(version["major"].toString());
           }
@@ -165,7 +174,7 @@ async function installContent(
             let parsedVerCheckData;
             try {
               // Strip '#' comments using regex, then parse using relaxed-json
-              parsedVerCheckData = rjson.parse(versionCheckerData.replace(COMMENT_STRIPPING_REGEX, "$1"));
+              parsedVerCheckData = parseJson(versionCheckerData);
             } catch (err) {
               const errMsg = versionCheckerFile + ' invalid: ' + err.message
               log('warn', errMsg);
@@ -279,7 +288,32 @@ function main(context) {
         getModAttribute(context, instanceIds, 'forumThreadId') != null;
     });
 
+  context.once(() => {
+    setupUpdates(context.api)
+  });
+
   return true;
+}
+
+/**
+ * A simple handler to register the events used for checking mod updates
+ * 
+ * @param api The extension API
+ */
+function setupUpdates(api: IExtensionApi) {
+  log('debug', 'beatvortex: initialising update handlers');
+  const checkForUpdates = async (gameId, mods: { [id: string]: IMod }) => {
+    log('info', 'attempting beatvortex update check', { modCount: Object.keys(mods).length, game: gameId });
+    await updates.checkForStarsectorModsUpdates(api, gameId, mods);
+    return Promise.resolve();
+  };
+  // const installUpdates = async (gameId: string, modId: string) => {
+  //     log('info', 'attempting beatvortex mod update', { modId });
+  //     await installBeatModsUpdate(api, gameId, modId);
+  //     return Promise.resolve();
+  // };
+  api.events.on('check-mods-version', checkForUpdates);
+  // api.events.on('mod-update', installUpdates);
 }
 
 function getModAttribute(context, instanceIds, attrKey) {
@@ -309,6 +343,39 @@ function getSafe(state, path, fallback) {
     }
   }
   return current;
+}
+
+/**
+ * A subset of the available mod metadata.
+ */
+export interface IModDetails {
+  _id: string
+  name: string
+  installedVersion: Version;
+  onlineVersion: Version;
+  gameVersion: string
+  author: {
+    username: string
+    _id: string
+  }
+  status: string
+  description: string
+  versionFileUrl: string
+  category: string
+  forumThreadId: string
+}
+
+export interface Version {
+  major: string
+  minor: string
+  patch: string
+}
+
+export interface VersionFile {
+  masterVersionFile: string
+  modName: string
+  modThreadId: string
+  modVersion: Version
 }
 
 module.exports = {
