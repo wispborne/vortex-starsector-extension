@@ -1,17 +1,17 @@
 import { IExtensionApi, IMod } from "vortex-api/lib/types/api";
 import { actions, util, log } from "vortex-api";
 import * as semver from "semver";
-import { GAME_ID, IModDetails, Version, parseJson, VersionFile } from '.'
+import { GAME_ID, Version, parseJson, VersionFile, ModAttributes } from '.'
 import axios, { AxiosResponse } from 'axios';
 import hjson = require('hjson');
 
 const UPDATE_CHECK_DELAY = 60 * 60 * 1000;
 
-// TODO add the version checker url to IMod?
 export async function checkForStarsectorModsUpdates(api: IExtensionApi, gameId: string, mods: { [id: string]: IMod }) {
     if (gameId !== GAME_ID) {
         return Promise.resolve();
     }
+    let notificationId = 'starsector-check-update-progress'
     var now = Date.now()
     var store = api.store;
     var filteredMods = Object.values(mods)
@@ -24,7 +24,7 @@ export async function checkForStarsectorModsUpdates(api: IExtensionApi, gameId: 
     let pos = 0;
     const progress = () => {
         store.dispatch(actions.addNotification({
-            id: 'starsector-check-update-progress',
+            id: notificationId,
             type: 'activity',
             message: 'Checking Starsector mods for update',
             progress: (pos * 100) / filteredMods.length,
@@ -32,38 +32,46 @@ export async function checkForStarsectorModsUpdates(api: IExtensionApi, gameId: 
         ++pos;
     };
     progress();
-    var modList: IModDetails[] = await Promise.all(filteredMods.map(async (mod: IMod) => {
-        var modId = util.getSafe(mod.attributes, ['modId'], '');
-        var modWithOnlineVersion = await getOnlineModVersion(util.getSafe(mod.attributes, ['modId'], null));
+    var modList: IMod[] = await Promise.all(filteredMods.map(async (mod: IMod) => {
+        var modId = mod.id;
+        var modWithOnlineVersion = await getOnlineModVersion(mod);
         log('info', `pulled data for ${modId}`, { onlineVersion: modWithOnlineVersion });
-        return modWithOnlineVersion
+        if (modWithOnlineVersion == null) {
+            log('warn', `Failed to check for update for ${modId}`, { onlineVersion: modWithOnlineVersion });
+            return null
+        }
+        let version = concatVersionObject(modWithOnlineVersion.modVersion)
+
+        store.dispatch(actions.setModAttribute(gameId, modId, ModAttributes.onlineVersion, version));
+        mod.attributes[ModAttributes.onlineVersion] = version
+        return mod
     }));
-    var updates = modList.filter(su => {
-        // if (!su.versions || su.versions.length == 0) {
-        //     return false;
-        // }
-        su.versions.sort((a, b) => semver.rcompare(a.version, b.version));
-        return semver.gt(su.versions[0].version, util.getSafe(su.mod.attributes, ['version'], '0.0.0'))
+    var updates = modList.filter(mod => {
+        return mod != null && isRemoteVersionNewer(mod.attributes[ModAttributes.version], mod.attributes[ModAttributes.onlineVersion])
     })
-        .map(su => {
-            return { update: su.versions[0], mod: su.mod };
-        });
-    for await (const modSummary of updates) {
-        log('info', 'found update for mod', { mod: modSummary.mod.id, update: modSummary.update.version })
-        store.dispatch(actions.setModAttribute(gameId, modSummary.mod.id, 'newestVersion', modSummary.update.version));
-        store.dispatch(actions.setModAttribute(gameId, modSummary.mod.id, 'newestFileId', modSummary.update._id));
-        store.dispatch(actions.setModAttribute(gameId, modSummary.mod.id, 'lastUpdateTime', now));
+    for await (const mod of updates) {
+        log('info', 'found update for mod', { mod: mod.id, installed: mod.attributes[ModAttributes.version], update: mod.attributes[ModAttributes.onlineVersion] })
+        store.dispatch(actions.setModAttribute(gameId, mod.id, ModAttributes.lastUpdateTime, now));
         progress();
     };
-    store.dispatch(actions.dismissNotification('bs-check-update-progress'));
+    store.dispatch(actions.dismissNotification(notificationId));
 }
 
-export async function getOnlineModVersion(mod: IModDetails): Promise<IModDetails> | null {
-    log('debug', 'retrieving latest version of ' + mod._id, { mod });
-    var updatedMod = await getApiResponse<IModDetails>(mod.versionFileUrl, (data: string) => {
-        var onlineVersionFile = parseJson<VersionFile>(data);
-        mod.onlineVersion = onlineVersionFile.modVersion
-        return mod
+export async function getOnlineModVersion(mod: IMod): Promise<VersionFile> | null {
+    log('debug', 'retrieving latest version of ' + mod.id, { mod });
+    var updatedMod = await getApiResponse<VersionFile>(util.getSafe(mod.attributes, [ModAttributes.onlineVersionUrl], ''), (data: string) => {
+        var json = parseJson(data);
+        let versionFile: VersionFile = {
+            masterVersionFile: util.getSafe(json, ['masterVersionFile'], ''),
+            modName: util.getSafe(json, ['modName'], ''),
+            modThreadId: util.getSafe(json, ['modThreadId'], ''),
+            modVersion: {
+                major: util.getSafe(json, ['modVersion', 'major'], ''),
+                minor: util.getSafe(json, ['modVersion', 'minor'], ''),
+                patch: util.getSafe(json, ['modVersion', 'patch'], '')
+            }
+        }
+        return versionFile
     });
     return updatedMod;
 }
@@ -91,6 +99,24 @@ async function getApiResponse<T>(url: string, returnHandler: (data: any) => T): 
         return null;
     });
     return resp;
+}
+
+export function concatVersionObject(version: { major: string, minor: string, patch: string }): string {
+    var versionElements = [];
+
+    if (version["major"] != null) {
+        versionElements.push(version["major"].toString());
+    }
+
+    if (version["minor"] != null) {
+        versionElements.push(version["minor"].toString());
+    }
+
+    if (version["patch"] != null) {
+        versionElements.push(version["patch"].toString());
+    }
+
+    return versionElements.join('.');
 }
 
 /**
@@ -131,9 +157,9 @@ function isRemoteVersionNewer(localVersion: string, remoteVersion: string) {
         // Compare first non-equal subversion number
         if (i < localMajorMinor.length && i < remoteMajorMinor.length) {
             // Pad numbers so ex: 0.65 is considered higher than 0.6
-            let localPadded = localMajorMinor[i].padEnd(3, '0'),
-                remotePadded = remoteMajorMinor[i].padEnd(3, '0');
-            return remotePadded.compareTo(localPadded) > 0;
+            let localPadded: string = localMajorMinor[i].padEnd(3, '0'),
+                remotePadded: string = remoteMajorMinor[i].padEnd(3, '0');
+            return remotePadded > localPadded;
         }
         // If version length differs but up to that length they are equal,
         // then the longer one is a patch of the shorter

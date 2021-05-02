@@ -14,8 +14,14 @@ For example, "ModName-3.0.0-beta-1.zip" and "ModName-3.0.0-beta-2.zip" often bot
 To build and create a zip for distribution, run:
 
 ```bash
-npm run build
-./zip.sh
+npm run build && ./zip.sh
 ```
 
 (don't forget to update the version in `package.json`, first!)
+
+## Random knowledge tidbits
+
+- Setting attributes at any time, eg for migrations
+  - `store.dispatch(actions.setModAttribute(gameId, modSummary.mod.id, 'newestVersion', modSummary.update.version));`
+  - <https://github.com/agc93/beatvortex/blob/071b7504ca/src/updates.ts#L58>
+

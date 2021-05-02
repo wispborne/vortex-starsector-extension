@@ -50,7 +50,7 @@ function testSupportedContent(files: string[], gameId: string) {
 /**
  * Strip '#' comments using regex, then parse using relaxed-json
  */
-export function parseJson<T>(json: string): T {
+export function parseJson(json: string) {
   return hjson.parse(json.replace(COMMENT_STRIPPING_REGEX, "$1"));
 }
 
@@ -116,21 +116,7 @@ async function installContent(
       } catch {
         // Else use new schema where version is an object with major, minor, patch.
         try {
-          var versionElements = [];
-
-          if (version["major"] != null) {
-            versionElements.push(version["major"].toString());
-          }
-
-          if (version["minor"] != null) {
-            versionElements.push(version["minor"].toString());
-          }
-
-          if (version["patch"] != null) {
-            versionElements.push(version["patch"].toString());
-          }
-
-          version = versionElements.join('.');
+          updates.concatVersionObject(version)
         } catch {
         }
       }
@@ -138,7 +124,7 @@ async function installContent(
       if (typeof (version) === 'string') {
         attrInstructions.push({
           type: 'attribute',
-          key: 'version',
+          key: ModAttributes.version,
           value: version,
         });
       }
@@ -154,7 +140,14 @@ async function installContent(
       // Set the mod author based on mod_info.json
       attrInstructions.push({
         type: 'attribute',
-        key: 'author',
+        key: ModAttributes.author,
+        value: getAttr('author'),
+      });
+
+      // Set the game version based on mod_info.json
+      attrInstructions.push({
+        type: 'attribute',
+        key: ModAttributes.gameVersion,
         value: getAttr('author'),
       });
 
@@ -196,8 +189,15 @@ async function installContent(
             // Set the forum thread id based on the Version Checker file
             attrInstructions.push({
               type: 'attribute',
-              key: 'forumThreadId',
+              key: ModAttributes.forumThreadId,
               value: getAttr('modThreadId'),
+            });
+
+            // Set the online version file url based on the Version Checker file
+            attrInstructions.push({
+              type: 'attribute',
+              key: ModAttributes.onlineVersionUrl,
+              value: getAttr('masterVersionFile'),
             });
 
             return Promise.resolve(attrInstructions);
@@ -301,14 +301,14 @@ function main(context) {
  * @param api The extension API
  */
 function setupUpdates(api: IExtensionApi) {
-  log('debug', 'beatvortex: initialising update handlers');
+  log('debug', 'starsector: initialising update handlers');
   const checkForUpdates = async (gameId, mods: { [id: string]: IMod }) => {
-    log('info', 'attempting beatvortex update check', { modCount: Object.keys(mods).length, game: gameId });
+    log('info', 'attempting starsector update check', { modCount: Object.keys(mods).length, game: gameId });
     await updates.checkForStarsectorModsUpdates(api, gameId, mods);
     return Promise.resolve();
   };
   // const installUpdates = async (gameId: string, modId: string) => {
-  //     log('info', 'attempting beatvortex mod update', { modId });
+  //     log('info', 'attempting starsector mod update', { modId });
   //     await installBeatModsUpdate(api, gameId, modId);
   //     return Promise.resolve();
   // };
@@ -348,30 +348,24 @@ function getSafe(state, path, fallback) {
 /**
  * A subset of the available mod metadata.
  */
-export interface IModDetails {
-  _id: string
-  name: string
-  installedVersion: Version;
-  onlineVersion: Version;
-  gameVersion: string
-  author: {
-    username: string
-    _id: string
-  }
-  status: string
-  description: string
-  versionFileUrl: string
-  category: string
-  forumThreadId: string
+export class ModAttributes {
+  static readonly author = 'author'
+  static readonly fileName = 'fileName'
+  static readonly forumThreadId = 'forumThreadId'
+  static readonly version = 'version'
+  static readonly onlineVersionUrl = 'onlineVersionUrl'
+  static readonly onlineVersion = 'onlineVersion'
+  static readonly gameVersion = 'gameVersion'
+  static readonly lastUpdateTime = 'lastUpdateTime'
 }
 
-export interface Version {
+export class Version {
   major: string
   minor: string
   patch: string
 }
 
-export interface VersionFile {
+export class VersionFile {
   masterVersionFile: string
   modName: string
   modThreadId: string
