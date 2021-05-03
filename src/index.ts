@@ -4,7 +4,7 @@ import { IExtensionContext, IDiscoveryResult, IGame, IState, ISupportedResult, P
 import Promise = require('bluebird');
 import path = require('path');
 import hjson = require('hjson');
-import { fs, log, util, selectors } from 'vortex-api';
+import { fs, log, util, selectors, actions } from 'vortex-api';
 import winapi = require('winapi-bindings');
 import semver = require('semver');
 import updates = require('./updates')
@@ -16,6 +16,9 @@ const VERSION_CHECKER_FILE_EXT = ".version"
 // Adapted from https://stackoverflow.com/a/24518413/1622788
 // Removes '#'s, which are used as comments by the game's json parser
 const COMMENT_STRIPPING_REGEX = /((["'])(?:\\[\s\S]|.)*?\2|\#(?![*\#])(?:\\.|\[(?:\\.|.)\]|.)*?\#)|\#.*?$|\#\*[\s\S]*?\*\#/gm;
+
+const STARSECTOR_FORUM_URL = 'https://fractalsoftworks.com/forum/index.php'
+const MOD_SOURCE_FORUM = "starsectorforum"
 
 /**
  * @returns {string | Promise<String>}
@@ -140,10 +143,17 @@ async function installContent(
       //   value: getAttr('description').trim(),
       // });
 
-      // Set the id based on mod_info.json
+      // Set the id of this mod's version based on mod_info.json
       attrInstructions.push({
         type: 'attribute',
-        key: ModAttributes.modId,
+        key: ModAttributes.modVariantId,
+        value: getAttr('name'),
+      });
+
+      // Set the mod's shared id (eg 'lazylib) based on mod_info.json
+      attrInstructions.push({
+        type: 'attribute',
+        key: ModAttributes.modSharedId,
         value: getAttr('id'),
       });
 
@@ -203,12 +213,24 @@ async function installContent(
               }
             }
 
+            let modThreadId = getAttr('modThreadId')
+
             // Set the forum thread id based on the Version Checker file
             attrInstructions.push({
               type: 'attribute',
               key: ModAttributes.forumThreadId,
-              value: getAttr('modThreadId'),
+              value: modThreadId,
             });
+
+            if (modThreadId) {
+              // Set's the Vortex-specific "source" attribute, which is the forum
+              // Only if the mod is on the forum (has a modThreadId)
+              attrInstructions.push({
+                type: 'attribute',
+                key: "source",
+                value: STARSECTOR_FORUM_URL,
+              });
+            }
 
             // Set the online version file url based on the Version Checker file
             attrInstructions.push({
@@ -253,7 +275,7 @@ function migrateFrom_1_1_0(api, oldVersion) {
 /**
  * @param {import('vortex-api/lib/types/api').IExtensionContext} context
  */
-function main(context) {
+function main(context: IExtensionContext) {
   context.registerGame({
     id: GAME_ID,
     name: 'Starsector',
@@ -268,6 +290,12 @@ function main(context) {
   });
 
   context.registerMigration(old => migrateFrom_1_1_0(context.api, old));
+
+  context.once(() => {
+    util.installIconSet(GAME_ID, path.join(__dirname, 'icons.svg'));
+    setupUpdates(context.api)
+    context.api.events.on('open-mod-page', openStarsectorModPage(context.api));
+  });
 
   context.registerInstaller(
     'starsector',
@@ -291,7 +319,7 @@ function main(context) {
         log('info', 'Opening mod forum id ' + forumThreadId, {});
 
         // Based on https://github.com/Nexus-Mods/Vortex/blob/063c53fc220beb95ccc1e49ef33174f1443f2e69/src/extensions/nexus_integration/eventHandlers.ts#L142
-        util.opn('https://fractalsoftworks.com/forum/index.php?topic=' + forumThreadId)
+        util.opn(getModForumThreadPage(forumThreadId))
           .catch(err => undefined);
         return true;
       } else if (error != null) {
@@ -305,9 +333,21 @@ function main(context) {
         getModAttribute(context, instanceIds, 'forumThreadId') != null;
     });
 
-  context.once(() => {
-    setupUpdates(context.api)
-  });
+  context.registerModSource(MOD_SOURCE_FORUM, 'Starsector Forum', () => {
+    // if you want to show an in-Vortex browser
+    //context.api.store.dispatch(actions.showURL('URL TO SHOW HERE'));
+    // if you want to open it externally
+    util.opn(STARSECTOR_FORUM_URL).catch(err => undefined);
+  },
+    {
+      condition: () => {
+        //If this game is supported and marked enabled, we can show the button.
+        const activeGameId = selectors.activeGameId(context.api.store.getState());
+        return (activeGameId === GAME_ID);
+      },
+      icon: 'choose an icon'
+    }
+  );
 
   return true;
 }
@@ -362,11 +402,32 @@ function getSafe(state, path, fallback) {
   return current;
 }
 
+function openStarsectorModPage(api: IExtensionApi) {
+  return (gameId: string, modId: string, source: string) => {
+    if (gameId !== GAME_ID) return; // exit for other games
+
+    const state = api.getState();
+    const mods: IMod[] = util.getSafe(state, ['persistent', 'mods', 'starsector'], undefined);
+    if (!mods) return; // no mods?!
+    const mod = Object.values(mods).find(mod => util.getSafe(mod.attributes, [ModAttributes.modVariantId], null) == modId)
+    if (!mod) return; // could not resolve the mod ID for some reason. 
+    const threadId = util.getSafe(mod.attributes, [ModAttributes.forumThreadId], null)
+    if (!threadId) return
+
+    util.opn(getModForumThreadPage(threadId)).catch(err => undefined);
+  }
+}
+
+function getModForumThreadPage(modThreadId: string): string {
+  return STARSECTOR_FORUM_URL + '?topic=' + modThreadId
+}
+
 /**
  * A subset of the available mod metadata.
  */
 export class ModAttributes {
-  static readonly modId = 'modId'
+  static readonly modSharedId = 'modSharedId'
+  static readonly modVariantId = 'modId'
   static readonly modName = 'modName'
   static readonly author = 'author'
   static readonly fileName = 'fileName'

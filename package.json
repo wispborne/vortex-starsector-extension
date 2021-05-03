@@ -5,7 +5,7 @@
   "main": "src/index.ts",
   "scripts": {
     "webpack": "node ./node_modules/webpack/bin/webpack --config webpack.config.js --progress --color",
-    "build": "npm run webpack && extractInfo"
+    "build": "npm run webpack && extractInfo && copyfiles -f ./gameart.png ./src/language*.json ./src/**/*.scss ./src/*.scss ./src/**/*.svg ./dist/"
   },
   "author": "ALazyWizard, Wisp",
   "license": "Apache 2.0",

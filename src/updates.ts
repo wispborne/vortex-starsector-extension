@@ -72,27 +72,26 @@ export async function checkForStarsectorModsUpdates(api: IExtensionApi, gameId: 
                 return `\n${name} (${newVer} vs ${oldVer})`;
             })}`
         }));
+
+        updates
+            .filter(mod => util.getSafe(mod.attributes, ['source'], null))
+            .forEach(modWithUpdate => {
+                // Set the attribute to unknown so that Vortex shows the "open in browser" icon
+                // https://github.com/Nexus-Mods/Vortex/blob/76b77494db78e39568cb12fe31e83c04ce1a2903/src/extensions/mod_management/util/modUpdateState.ts#L33
+                store.dispatch(actions.setModAttribute(gameId, modWithUpdate.id, "newestFileId", "unknown"));
+            });
     }
 }
 
 export async function getOnlineModVersion(mod: IMod): Promise<VersionFile> | null {
     log('debug', 'retrieving latest version of ' + mod.id, { mod });
     var updatedMod = await getApiResponse<VersionFile>(util.getSafe(mod.attributes, [ModAttributes.onlineVersionUrl], ''), (data: VersionFile) => {
-        return data;
-        // let versionFile: VersionFile = {
-        //     masterVersionFile: util.getSafe(json, ['masterVersionFile'], ''),
-        //     modName: util.getSafe(json, ['modName'], ''),
-        //     modThreadId: util.getSafe(json, ['modThreadId'], ''),
-        //     modVersion: {
-        //         major: util.getSafe(json, ['modVersion', 'major'], ''),
-        //         minor: util.getSafe(json, ['modVersion', 'minor'], ''),
-        //         patch: util.getSafe(json, ['modVersion', 'patch'], '')
-        //     }
-        // }
+        return typeof (data) === 'string'
+            ? parseJson(data)
+            : data;
     });
     return updatedMod;
 }
-
 
 /**
  * Helper method for retrieving data.
