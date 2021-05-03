@@ -40,7 +40,12 @@ export async function checkForStarsectorModsUpdates(api: IExtensionApi, gameId: 
             log('warn', `Failed to check for update for ${modId}`, { onlineVersion: modWithOnlineVersion });
             return null
         }
-        let version = concatVersionObject(modWithOnlineVersion.modVersion)
+        let version = "";
+        try {
+            version = (typeof (modWithOnlineVersion.modVersion) === 'string')
+                ? modWithOnlineVersion.modVersion
+                : concatVersionObject(modWithOnlineVersion.modVersion)
+        } catch (e) { }
 
         store.dispatch(actions.setModAttribute(gameId, modId, ModAttributes.onlineVersion, version));
         mod.attributes[ModAttributes.onlineVersion] = version
@@ -55,23 +60,35 @@ export async function checkForStarsectorModsUpdates(api: IExtensionApi, gameId: 
         progress();
     };
     store.dispatch(actions.dismissNotification(notificationId));
+
+    if (updates.length > 0) {
+        store.dispatch(actions.addNotification({
+            id: notificationId,
+            type: 'success',
+            message: `${updates.length} update(s) found for Starsector mods.${updates.map(mod => {
+                let name = util.getSafe(mod.attributes, [ModAttributes.modName], '')
+                let oldVer = util.getSafe(mod.attributes, [ModAttributes.version], '')
+                let newVer = util.getSafe(mod.attributes, [ModAttributes.onlineVersion], '')
+                return `\n${name} (${newVer} vs ${oldVer})`;
+            })}`
+        }));
+    }
 }
 
 export async function getOnlineModVersion(mod: IMod): Promise<VersionFile> | null {
     log('debug', 'retrieving latest version of ' + mod.id, { mod });
-    var updatedMod = await getApiResponse<VersionFile>(util.getSafe(mod.attributes, [ModAttributes.onlineVersionUrl], ''), (data: string) => {
-        var json = parseJson(data);
-        let versionFile: VersionFile = {
-            masterVersionFile: util.getSafe(json, ['masterVersionFile'], ''),
-            modName: util.getSafe(json, ['modName'], ''),
-            modThreadId: util.getSafe(json, ['modThreadId'], ''),
-            modVersion: {
-                major: util.getSafe(json, ['modVersion', 'major'], ''),
-                minor: util.getSafe(json, ['modVersion', 'minor'], ''),
-                patch: util.getSafe(json, ['modVersion', 'patch'], '')
-            }
-        }
-        return versionFile
+    var updatedMod = await getApiResponse<VersionFile>(util.getSafe(mod.attributes, [ModAttributes.onlineVersionUrl], ''), (data: VersionFile) => {
+        return data;
+        // let versionFile: VersionFile = {
+        //     masterVersionFile: util.getSafe(json, ['masterVersionFile'], ''),
+        //     modName: util.getSafe(json, ['modName'], ''),
+        //     modThreadId: util.getSafe(json, ['modThreadId'], ''),
+        //     modVersion: {
+        //         major: util.getSafe(json, ['modVersion', 'major'], ''),
+        //         minor: util.getSafe(json, ['modVersion', 'minor'], ''),
+        //         patch: util.getSafe(json, ['modVersion', 'patch'], '')
+        //     }
+        // }
     });
     return updatedMod;
 }
@@ -123,7 +140,7 @@ export function concatVersionObject(version: { major: string, minor: string, pat
  * https://github.com/LazyWizard/version-checker/blob/master/src/org/lazywizard/versionchecker/VersionChecker.java#L234
  */
 function isRemoteVersionNewer(localVersion: string, remoteVersion: string) {
-    if (localVersion == null || remoteVersion == null) {
+    if (!localVersion || !remoteVersion) {
         return false;
     }
 

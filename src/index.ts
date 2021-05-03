@@ -94,10 +94,13 @@ async function installContent(
           new util.DataInvalid('Missing, invalid or unsupported ' + MOD_INFO_FILE));
       }
 
-      outputPath = (modInfoFile.indexOf(MOD_INFO_FILE) > 0)
-        ? path.basename(path.dirname(modInfoFile))
-        : Promise.reject(
-          new util.DataInvalid('Missing, invalid or unsupported ' + MOD_INFO_FILE));
+      outputPath = "";
+      if (modInfoFile.indexOf(MOD_INFO_FILE) > 0) {
+        outputPath = path.basename(path.dirname(modInfoFile))
+      } else {
+        return Promise.reject(
+          new util.DataInvalid(`${MOD_INFO_FILE} not found in a folder. The mod may be incorrectly packaged`));
+      }
 
       // Don't overwrite name because authors tend to put "beta 1" or "RC1" or "WIP 3"
       // in the Nexus or archive name, but not in the metadata name or metadata version.
@@ -136,6 +139,20 @@ async function installContent(
       //   key: 'description',
       //   value: getAttr('description').trim(),
       // });
+
+      // Set the id based on mod_info.json
+      attrInstructions.push({
+        type: 'attribute',
+        key: ModAttributes.modId,
+        value: getAttr('id'),
+      });
+
+      // Set the name based on mod_info.json
+      attrInstructions.push({
+        type: 'attribute',
+        key: ModAttributes.modName,
+        value: getAttr('name'),
+      });
 
       // Set the mod author based on mod_info.json
       attrInstructions.push({
@@ -349,6 +366,8 @@ function getSafe(state, path, fallback) {
  * A subset of the available mod metadata.
  */
 export class ModAttributes {
+  static readonly modId = 'modId'
+  static readonly modName = 'modName'
   static readonly author = 'author'
   static readonly fileName = 'fileName'
   static readonly forumThreadId = 'forumThreadId'
