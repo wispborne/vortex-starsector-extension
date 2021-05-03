@@ -5,7 +5,7 @@
   "main": "src/index.ts",
   "scripts": {
     "webpack": "node ./node_modules/webpack/bin/webpack --config webpack.config.js --progress --color",
-    "build": "npm run webpack && extractInfo && copyfiles -f ./gameart.png ./src/language*.json ./src/**/*.scss ./src/*.scss ./src/**/*.svg ./dist/"
+    "build": "npm run webpack && extractInfo && copyfiles -f ./gameart.png ./src/**/*.scss ./src/*.scss ./src/**/*.svg ./dist/"
   },
   "author": "ALazyWizard, Wisp",
   "license": "Apache 2.0",
@@ -23,6 +23,7 @@
     "ts-loader": "5.3.3",
     "vortex-api": "Nexus-Mods/vortex-api",
     "webpack": "^4.46.0",
-    "webpack-cli": "^4.6.0"
+    "webpack-cli": "^4.6.0",
+    "copyfiles": "^2.3.0"
   }
 }
