@@ -1,9 +1,7 @@
 import { IExtensionApi, IMod } from "vortex-api/lib/types/api";
 import { actions, util, log } from "vortex-api";
-import * as semver from "semver";
-import { GAME_ID, Version, parseJson, VersionFile, ModAttributes } from '.'
+import { GAME_ID, parseJson, VersionFile, ModAttributes, STARSECTOR_FORUM_URL } from '.'
 import axios, { AxiosResponse } from 'axios';
-import hjson = require('hjson');
 
 const UPDATE_CHECK_DELAY = 60 * 60 * 1000;
 
@@ -32,7 +30,7 @@ export async function checkForStarsectorModsUpdates(api: IExtensionApi, gameId: 
         ++pos;
     };
     progress();
-    var modList: IMod[] = await Promise.all(filteredMods.map(async (mod: IMod) => {
+    var modList: IMod[] = (await Promise.all(filteredMods.map(async (mod: IMod) => {
         var modId = mod.id;
         var modWithOnlineVersion = await getOnlineModVersion(mod);
         log('info', `pulled data for ${modId}`, { onlineVersion: modWithOnlineVersion });
@@ -44,22 +42,37 @@ export async function checkForStarsectorModsUpdates(api: IExtensionApi, gameId: 
         try {
             version = (typeof (modWithOnlineVersion.modVersion) === 'string')
                 ? modWithOnlineVersion.modVersion
-                : concatVersionObject(modWithOnlineVersion.modVersion)
+                : concatVersionObject(modWithOnlineVersion.modVersion, true)
         } catch (e) { }
 
-        store.dispatch(actions.setModAttribute(gameId, modId, ModAttributes.onlineVersion, version));
-        mod.attributes[ModAttributes.onlineVersion] = version
+        store.dispatch(actions.setModAttribute(gameId, modId, ModAttributes.onlineVersionCheckerVersion, version));
+        mod.attributes[ModAttributes.onlineVersionCheckerVersion] = version
         return mod
-    }));
+    })))
+        .filter(mod => mod != null);
+
     var updates = modList.filter(mod => {
-        return mod != null && isRemoteVersionNewer(mod.attributes[ModAttributes.version], mod.attributes[ModAttributes.onlineVersion])
+        return isRemoteVersionNewer(mod.attributes[ModAttributes.localVersionCheckerVersion], mod.attributes[ModAttributes.onlineVersionCheckerVersion])
+    })
+    var upToDate = modList.filter(mod => {
+        return !isRemoteVersionNewer(mod.attributes[ModAttributes.localVersionCheckerVersion], mod.attributes[ModAttributes.onlineVersionCheckerVersion])
     })
     for await (const mod of updates) {
-        log('info', 'found update for mod', { mod: mod.id, installed: mod.attributes[ModAttributes.version], update: mod.attributes[ModAttributes.onlineVersion] })
+        log('info', 'found update for mod', { mod: mod.id, installed: mod.attributes[ModAttributes.localVersionCheckerVersion], update: mod.attributes[ModAttributes.onlineVersionCheckerVersion] })
         store.dispatch(actions.setModAttribute(gameId, mod.id, ModAttributes.lastUpdateTime, now));
         progress();
     };
     store.dispatch(actions.dismissNotification(notificationId));
+
+    if (upToDate.length > 0) {
+        upToDate
+            .filter(mod => util.getSafe(mod.attributes, ['source'], null) == STARSECTOR_FORUM_URL)
+            .forEach(upToDateMod => {
+                // Set the attribute to undefined so that Vortex does not show the "open in browser" icon
+                // https://github.com/Nexus-Mods/Vortex/blob/76b77494db78e39568cb12fe31e83c04ce1a2903/src/extensions/mod_management/util/modUpdateState.ts#L33
+                store.dispatch(actions.setModAttribute(gameId, upToDateMod.id, "newestFileId", undefined));
+            });
+    }
 
     if (updates.length > 0) {
         store.dispatch(actions.addNotification({
@@ -67,14 +80,14 @@ export async function checkForStarsectorModsUpdates(api: IExtensionApi, gameId: 
             type: 'success',
             message: `${updates.length} update(s) found for Starsector mods.${updates.map(mod => {
                 let name = util.getSafe(mod.attributes, [ModAttributes.modName], '')
-                let oldVer = util.getSafe(mod.attributes, [ModAttributes.version], '')
-                let newVer = util.getSafe(mod.attributes, [ModAttributes.onlineVersion], '')
+                let oldVer = util.getSafe(mod.attributes, [ModAttributes.localVersionCheckerVersion], '')
+                let newVer = util.getSafe(mod.attributes, [ModAttributes.onlineVersionCheckerVersion], '')
                 return `\n${name} (${newVer} vs ${oldVer})`;
             })}`
         }));
 
         updates
-            .filter(mod => util.getSafe(mod.attributes, ['source'], null))
+            .filter(mod => util.getSafe(mod.attributes, ['source'], null) == STARSECTOR_FORUM_URL)
             .forEach(modWithUpdate => {
                 // Set the attribute to unknown so that Vortex shows the "open in browser" icon
                 // https://github.com/Nexus-Mods/Vortex/blob/76b77494db78e39568cb12fe31e83c04ce1a2903/src/extensions/mod_management/util/modUpdateState.ts#L33
@@ -117,22 +130,34 @@ async function getApiResponse<T>(url: string, returnHandler: (data: any) => T): 
     return resp;
 }
 
-export function concatVersionObject(version: { major: string, minor: string, patch: string }): string {
+export function concatVersionObject(version: { major: string, minor: string, patch: string }, forceSemver: boolean): string {
     var versionElements = [];
+    if (version == null) return null;
 
-    if (version["major"] != null) {
+    // Cannot simply do an `if (variable)` check because 0 would be false
+    if (!isNullOrEmpty(version["major"])) {
         versionElements.push(version["major"].toString());
+    } else if (forceSemver) {
+        versionElements.push("0");
     }
 
-    if (version["minor"] != null) {
+    if (!isNullOrEmpty(version["minor"])) {
         versionElements.push(version["minor"].toString());
+    } else if (forceSemver) {
+        versionElements.push("0");
     }
 
-    if (version["patch"] != null) {
+    if (!isNullOrEmpty(version["patch"])) {
         versionElements.push(version["patch"].toString());
+    } else if (forceSemver) {
+        versionElements.push("0");
     }
 
     return versionElements.join('.');
+}
+
+function isNullOrEmpty(str: string): boolean {
+    return str == null || str === ""
 }
 
 /**

@@ -8,17 +8,25 @@ import { fs, log, util, selectors, actions } from 'vortex-api';
 import winapi = require('winapi-bindings');
 import semver = require('semver');
 import updates = require('./updates')
+import { concatVersionObject } from './updates';
+import { readModMetadata } from './modMetadataReader';
 
 export const GAME_ID = 'starsector';
-const MOD_INFO_FILE = "mod_info.json"
-const VERSION_CHECKER_FILE_EXT = ".version"
+export const MOD_INFO_FILE = "mod_info.json"
+export const VERSION_CHECKER_FILE_EXT = ".version"
+export const MOD_FOLDER_LOCATION = "mods"
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Debug flag
+// - Always migrate on boot
+// - Display debug context menu options 
+const debugMode = false
 
 // Adapted from https://stackoverflow.com/a/24518413/1622788
 // Removes '#'s, which are used as comments by the game's json parser
 const COMMENT_STRIPPING_REGEX = /((["'])(?:\\[\s\S]|.)*?\2|\#(?![*\#])(?:\\.|\[(?:\\.|.)\]|.)*?\#)|\#.*?$|\#\*[\s\S]*?\*\#/gm;
 
-const STARSECTOR_FORUM_URL = 'https://fractalsoftworks.com/forum/index.php'
-const MOD_SOURCE_FORUM = "starsectorforum"
+export const STARSECTOR_FORUM_URL = 'https://fractalsoftworks.com/forum/index.php'
 
 /**
  * @returns {string | Promise<String>}
@@ -66,184 +74,29 @@ async function installContent(
   const modInfoFile = files.find(file => path.basename(file) === MOD_INFO_FILE);
   const basePath = path.dirname(modInfoFile);
 
-  let outputPath = basePath;
+  let outputPath = "";
+  if (modInfoFile.indexOf(MOD_INFO_FILE) > 0) {
+    outputPath = path.basename(path.dirname(modInfoFile))
+  } else {
+    return Promise.reject(
+      new util.DataInvalid(`${MOD_INFO_FILE} not found in a folder. The mod may be incorrectly packaged`));
+  }
 
-  const contentFile = path.join(destinationPath, modInfoFile);
-  return fs.readFileAsync(contentFile, { encoding: 'utf8' })
-    .then((data: string) => {
+  let absoluteFiles = files.map((relativeFile) => path.join(destinationPath, relativeFile))
+
+  return readModMetadata(contextApi, absoluteFiles)
+    .then((attributes: Map<string, string>) => {
       const attrInstructions = [];
-      let parsed;
-      try {
-        parsed = parseJson(data);
-      } catch (err) {
-        log('warn', MOD_INFO_FILE + ' invalid: ' + err.message);
-        return Promise.resolve(attrInstructions);
-      }
 
-      // Function to get a value from mod_info.json by key
-      const getAttr = key => {
-        try {
-          return parsed[key];
-        } catch (err) {
-          log('info', 'attribute missing in ' + MOD_INFO_FILE, { key });
-          return "";
-        }
-      }
-
-      // If mod_info.json has no id, this is an invalid mod
-      const contentModId = getAttr('id');
-      if (contentModId === undefined) {
-        return Promise.reject(
-          new util.DataInvalid('Missing, invalid or unsupported ' + MOD_INFO_FILE));
-      }
-
-      outputPath = "";
-      if (modInfoFile.indexOf(MOD_INFO_FILE) > 0) {
-        outputPath = path.basename(path.dirname(modInfoFile))
-      } else {
-        return Promise.reject(
-          new util.DataInvalid(`${MOD_INFO_FILE} not found in a folder. The mod may be incorrectly packaged`));
-      }
-
-      // Don't overwrite name because authors tend to put "beta 1" or "RC1" or "WIP 3"
-      // in the Nexus or archive name, but not in the metadata name or metadata version.
-      // We don't want to lose that information, even to have a nicer-looking name than the archive filename.
-      // attrInstructions.push({
-      //   type: 'attribute',
-      //   key: 'customFileName',
-      //   value: getAttr('name').trim(),
-      // });
-
-      // Set the mod version based on mod_info.json
-      var version = getAttr('version')
-      try {
-        // Works if using old schema where version is just a string
-        version = version.trim()
-      } catch {
-        // Else use new schema where version is an object with major, minor, patch.
-        try {
-          updates.concatVersionObject(version)
-        } catch {
-        }
-      }
-
-      if (typeof (version) === 'string') {
+      attributes.forEach((key: string, value: string) => {
         attrInstructions.push({
           type: 'attribute',
-          key: ModAttributes.version,
-          value: version,
+          key: key,
+          value: value
         });
-      }
-
-      // Description is fairly hidden in the UI, and we don't want to overwrite it
-      // if it's being set from Nexus Mods.
-      // attrInstructions.push({
-      //   type: 'attribute',
-      //   key: 'description',
-      //   value: getAttr('description').trim(),
-      // });
-
-      // Set the id of this mod's version based on mod_info.json
-      attrInstructions.push({
-        type: 'attribute',
-        key: ModAttributes.modVariantId,
-        value: getAttr('name'),
-      });
-
-      // Set the mod's shared id (eg 'lazylib) based on mod_info.json
-      attrInstructions.push({
-        type: 'attribute',
-        key: ModAttributes.modSharedId,
-        value: getAttr('id'),
-      });
-
-      // Set the name based on mod_info.json
-      attrInstructions.push({
-        type: 'attribute',
-        key: ModAttributes.modName,
-        value: getAttr('name'),
-      });
-
-      // Set the mod author based on mod_info.json
-      attrInstructions.push({
-        type: 'attribute',
-        key: ModAttributes.author,
-        value: getAttr('author'),
-      });
-
-      // Set the game version based on mod_info.json
-      attrInstructions.push({
-        type: 'attribute',
-        key: ModAttributes.gameVersion,
-        value: getAttr('author'),
-      });
+      })
 
       return Promise.resolve(attrInstructions);
-    })
-    .then(attrInstructions => {
-
-      // Read the version file, if it exists
-      const versionCheckerFile = files.find(file => path.extname(file) === VERSION_CHECKER_FILE_EXT);
-      log('info', 'Found version checker file: ' + versionCheckerFile)
-
-      if (versionCheckerFile) {
-        const contentFile = path.join(destinationPath, versionCheckerFile);
-
-        return fs.readFileAsync(contentFile, { encoding: 'utf8' })
-          .then(versionCheckerData => {
-            let parsedVerCheckData;
-            try {
-              // Strip '#' comments using regex, then parse using relaxed-json
-              parsedVerCheckData = parseJson(versionCheckerData);
-            } catch (err) {
-              const errMsg = versionCheckerFile + ' invalid: ' + err.message
-              log('warn', errMsg);
-
-              contextApi.showErrorNotification(errMsg, {});
-              return Promise.resolve(attrInstructions);
-            }
-
-            // Function to get a value from *.version by key
-            const getAttr = key => {
-              try {
-                return parsedVerCheckData[key];
-              } catch (err) {
-                log('info', 'attribute missing in ' + versionCheckerFile, { key });
-                return "";
-              }
-            }
-
-            let modThreadId = getAttr('modThreadId')
-
-            // Set the forum thread id based on the Version Checker file
-            attrInstructions.push({
-              type: 'attribute',
-              key: ModAttributes.forumThreadId,
-              value: modThreadId,
-            });
-
-            if (modThreadId) {
-              // Set's the Vortex-specific "source" attribute, which is the forum
-              // Only if the mod is on the forum (has a modThreadId)
-              attrInstructions.push({
-                type: 'attribute',
-                key: "source",
-                value: STARSECTOR_FORUM_URL,
-              });
-            }
-
-            // Set the online version file url based on the Version Checker file
-            attrInstructions.push({
-              type: 'attribute',
-              key: ModAttributes.onlineVersionUrl,
-              value: getAttr('masterVersionFile'),
-            });
-
-            return Promise.resolve(attrInstructions);
-          })
-      } else {
-        return Promise.resolve(attrInstructions);
-      }
     })
     .then(attrInstructions => {
       let instructions = attrInstructions.concat(files.filter(file =>
@@ -258,18 +111,78 @@ async function installContent(
 }
 
 // From https://github.com/Nexus-Mods/vortex-games/blob/296abf250fdc1c57314791e704d14a5165695dec/game-bladeandsorcery/index.js#L403
-function migrateFrom_1_1_0(api, oldVersion) {
-  if (semver.gt(oldVersion, '1.1.0')) {
+function migrateFrom_1_2_2(api, oldVersion) {
+  if (semver.gt(oldVersion, '1.2.2') && !debugMode) {
     return Promise.resolve();
   }
 
   const state = api.store.getState();
   const mods = util.getSafe(state, ['persistent', 'mods', GAME_ID], {});
-  const modKeys = Object.keys(mods);
+  const modKeys: string[] = Object.keys(mods);
 
   if (modKeys.length === 0) {
     return Promise.resolve();
   }
+
+  const activatorId = util.getSafe(state, ['settings', 'mods', 'activator', GAME_ID], undefined);
+  const gameDiscovery =
+    util.getSafe(state, ['settings', 'gameMode', 'discovered', GAME_ID], undefined);
+
+  if ((gameDiscovery?.path === undefined)
+    || (activatorId === undefined)) {
+    // if this game is not discovered or deployed there is no need to migrate
+    log('debug', 'skipping starsector migration because no deployment set up for it');
+    return Promise.resolve();
+  }
+
+  // Holds mod ids of mods we failed to migrate.
+  let failedToMigrate = [];
+
+  const deployTarget = path.join(gameDiscovery.path, MOD_FOLDER_LOCATION);
+  const stagingFolder = selectors.installPathForGame(state, GAME_ID);
+  const nonNexusMods: IMod[] = modKeys.filter(key => mods[key].source !== 'nexus')
+    .map(key => mods[key]);
+
+  return api.awaitUI()
+    .then(() => Promise.each(nonNexusMods, (mod: IMod) => {
+      const modPath = path.join(stagingFolder, mod.installationPath);
+      let files = [];
+      return util.walk(modPath, entries => {
+        files = files.concat(entries);
+      })
+        .then(() => readModMetadata(api, files)
+          .catch(e => {
+            console.log(e)
+            failedToMigrate.push(mod.archiveId + '\n' + e)
+          }))
+        .then(attributes => {
+          if (attributes) {
+            for (let [key, value] of Object.entries(attributes)) {
+              api.store.dispatch(actions.setModAttribute(GAME_ID, mod.id, key, value));
+            }
+          }
+        })
+    }))
+    .finally(() => {
+      if (failedToMigrate.length > 0) {
+        api.sendNotification({
+          type: 'warning',
+          message: 'Failed to migrate mods',
+          actions: [
+            {
+              title: 'More', action: (dismiss) =>
+                api.showDialog('info', 'Mods failed migration', {
+                  text: api.translate('Some mods failed to migrate to an updated format.\n\n'
+                    + '{{modIds}}',
+                    { replace: { modIds: failedToMigrate.join('\n') } })
+                }, [{ label: 'Close', action: () => dismiss() }])
+            },
+          ],
+        });
+      } else {
+        // api.store.dispatch(actions.setDeploymentNecessary(GAME_ID, true));
+      }
+    });
 }
 
 /**
@@ -281,7 +194,7 @@ function main(context: IExtensionContext) {
     name: 'Starsector',
     mergeMods: true,
     queryPath: findGame,
-    queryModPath: () => 'mods',
+    queryModPath: () => MOD_FOLDER_LOCATION,
     logo: 'gameart.jpg',
     executable: () => 'starsector.exe',
     requiredFiles: [
@@ -289,7 +202,7 @@ function main(context: IExtensionContext) {
     ]
   });
 
-  context.registerMigration(old => migrateFrom_1_1_0(context.api, old));
+  context.registerMigration(old => migrateFrom_1_2_2(context.api, old));
 
   context.once(() => {
     util.installIconSet(GAME_ID, path.join(__dirname, 'icons.svg'));
@@ -333,7 +246,21 @@ function main(context: IExtensionContext) {
         getModAttribute(context, instanceIds, 'forumThreadId') != null;
     });
 
-  context.registerModSource(MOD_SOURCE_FORUM, 'Starsector Forum', () => {
+  if (debugMode) {
+    context.registerAction('mods-action-icons', 900, 'nexus', {}, 'Migrate Mods',
+      instanceIds => {
+        if (!isVortexInStarsectorMode(context)) {
+          return false;
+        }
+
+        migrateFrom_1_2_2(context.api, "1.0.0")
+      },
+      instanceIds => {
+        return isVortexInStarsectorMode(context);
+      });
+  }
+
+  context.registerModSource('starsectorforum', 'Starsector Forum', () => {
     // if you want to show an in-Vortex browser
     //context.api.store.dispatch(actions.showURL('URL TO SHOW HERE'));
     // if you want to open it externally
@@ -431,10 +358,12 @@ export class ModAttributes {
   static readonly modName = 'modName'
   static readonly author = 'author'
   static readonly fileName = 'fileName'
+  static readonly source = 'source'
   static readonly forumThreadId = 'forumThreadId'
-  static readonly version = 'version'
+  static readonly displayVersion = 'version'
+  static readonly localVersionCheckerVersion = 'localVersionCheckerVersion'
   static readonly onlineVersionUrl = 'onlineVersionUrl'
-  static readonly onlineVersion = 'onlineVersion'
+  static readonly onlineVersionCheckerVersion = 'onlineVersionCheckerVersion'
   static readonly gameVersion = 'gameVersion'
   static readonly lastUpdateTime = 'lastUpdateTime'
 }
