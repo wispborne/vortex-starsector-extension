@@ -88,13 +88,15 @@ async function installContent(
     .then((attributes: Map<string, string>) => {
       const attrInstructions = [];
 
-      attributes.forEach((key: string, value: string) => {
-        attrInstructions.push({
-          type: 'attribute',
-          key: key,
-          value: value
-        });
-      })
+      if (attributes) {
+        for (let [key, value] of Object.entries(attributes)) {
+          attrInstructions.push({
+            type: 'attribute',
+            key: key,
+            value: value
+          });
+        }
+      }
 
       return Promise.resolve(attrInstructions);
     })
